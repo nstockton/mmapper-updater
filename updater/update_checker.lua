@@ -4,7 +4,7 @@ local json = require("dkjson")
 local lfs = require("lfs")
 
 local APP_NAME = "MMapper"
-SCRIPT_VERSION = "1.0"
+local SCRIPT_VERSION = "1.0"
 local RELEASE_INFO_FILE = "update_info.ignore"
 local ZIP_FILE = "mmapper.zip"
 
@@ -35,12 +35,12 @@ end
 
 local function save_last_info(tbl)
 	-- Encode the release information in tbl to JSon, and save it to a file.
-	local orderedKeys = {}
+	local ordered_keys = {}
 	for k, v in pairs(tbl) do
-		table.insert(orderedKeys, k)
+		table.insert(ordered_keys, k)
 	end
-	table.sort(orderedKeys)
-	local data = string.gsub(json.encode(tbl, {indent=true, level=0, keyorder=orderedKeys}), "\r?\n", "\r\n")
+	table.sort(ordered_keys)
+	local data = string.gsub(json.encode(tbl, {indent=true, level=0, keyorder=ordered_keys}), "\r?\n", "\r\n")
 	local handle = io.open(RELEASE_INFO_FILE, "wb")
 	handle:write(data)
 	handle:close()
