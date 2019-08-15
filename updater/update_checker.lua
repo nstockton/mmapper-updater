@@ -5,13 +5,16 @@ local lfs = require("lfs")
 
 local APP_NAME = "MMapper"
 local SCRIPT_VERSION = "1.0"
+local GITHUB_USER = "MUME"
+local APPVEYOR_USER = "nschimme"
+local REPO = "MMapper"
 local RELEASE_INFO_FILE = "update_info.ignore"
 local ZIP_FILE = "mmapper.zip"
 
 local HELP_TEXT = [[
 -h, --help:	Display this help.
 -release, -dev:	 Specify whether the latest stable release from GitHub should be used, or the latest development build from AppVeyor (defaults to release).
--x, -x86, -x64:	specifier the architecture of the binaries to download (defaults to the system architecture or x86 if not found). -x will attempt to use the architecture reported by the system.
+-x, -x86, -x64:	Specify the architecture of the binaries to download (defaults to the system architecture or x86 if not found). -x will attempt to use the architecture reported by the system.
 -MinGW, -VS:	Specify which binaries to download based on compiler (defaults to MinGW).
 ]]
 
@@ -46,8 +49,8 @@ local function save_last_info(tbl)
 	handle:close()
 end
 
-local function _get_latest_github(user, repo, arch, compiler)
-	local project_url = string.format("https://api.github.com/repos/%s/%s/releases/latest", user, repo)
+local function _get_latest_github(arch, compiler)
+	local project_url = string.format("https://api.github.com/repos/%s/%s/releases/latest", GITHUB_USER, REPO)
 	local command = string.format("curl.exe --silent --location --retry 999 --retry-max-time 0 --continue-at - \"%s\"", project_url)
 	local handle = io.popen(command)
 	local result = handle:read("*all")
@@ -56,6 +59,7 @@ local function _get_latest_github(user, repo, arch, compiler)
 	local release_data = {}
 	release_data.arch = arch or "x86"
 	release_data.compiler = compiler or "mingw"
+	release_data.status = "success"
 	if gh then
 		release_data.tag_name = gh.tag_name
 		for i, asset in ipairs(gh.assets) do
@@ -77,8 +81,8 @@ local function _get_latest_github(user, repo, arch, compiler)
 	return release_data
 end
 
-local function _get_latest_appveyor(user, repo, arch, compiler)
-	local project_url = string.format("https://ci.appveyor.com/api/projects/%s/%s", user, repo)
+local function _get_latest_appveyor(arch, compiler)
+	local project_url = string.format("https://ci.appveyor.com/api/projects/%s/%s", APPVEYOR_USER, REPO)
 	local command = string.format("curl.exe --silent --location --retry 999 --retry-max-time 0 --continue-at - \"%s\"", project_url)
 	local handle = io.popen(command)
 	local result = handle:read("*all")
@@ -87,7 +91,8 @@ local function _get_latest_appveyor(user, repo, arch, compiler)
 	local release_data = {}
 	release_data.arch = arch or "x86"
 	release_data.compiler = compiler or "mingw"
-	if av and av.build.status == "success" then
+	release_data.status = av and av.build.status or nil
+	if release_data.status == "success" then
 		release_data.tag_name = string.match(av.build.version, "^[vV](.+)[-][^-]+$")
 		release_data.updated_at = av.build.updated
 		for i, job in ipairs(av.build.jobs) do
@@ -222,9 +227,9 @@ local function get_latest_info(last_provider, last_arch, last_compiler)
 	local compiler = use_mingw and "mingw" or use_vs and "vs" or last_compiler or "mingw"
 	if provider == "github" then
 		-- Change this if / when more options for GitHub releases become available.
-		return _get_latest_github("MUME", APP_NAME, "x86", "mingw")
+		return _get_latest_github("x86", "mingw")
 	elseif provider == "appveyor" then
-		return _get_latest_appveyor("nschimme", APP_NAME, arch, compiler)
+		return _get_latest_appveyor(arch, compiler)
 	else
 		assert(nil, string.format("Invalid provider: '%s'.", provider))
 	end
@@ -253,7 +258,11 @@ if os.isDir("..\\mmapper") and not called_by_script() then
 	printf("Checking for updates to %s.", APP_NAME)
 end
 
-if not os.isDir("..\\mmapper") then
+if latest.status ~= "success" then
+	printf("Error: unable to update at this time. Please try again in a few minutes.")
+	printf("Build status returned by the server was (%s).", latest.status or "unknown")
+	os.exit(1)
+elseif not os.isDir("..\\mmapper") then
 	printf("%s not found. This is normal for new installations.", APP_NAME)
 	if do_download(latest) then
 		do_extract()
