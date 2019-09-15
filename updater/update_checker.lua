@@ -98,7 +98,7 @@ local function _get_latest_appveyor(arch, compiler)
 		for i, job in ipairs(av.build.jobs) do
 			local job_arch = string.match(string.lower(job.name), "arch=(x%d%d)")
 			local job_compiler = string.match(string.lower(job.name), "compiler=([^%s%d,]+)")
-			if job.status == "success" and job_arch == release_data.arch and compiler == release_data.compiler then
+			if job.status == "success" and job_arch == release_data.arch and job_compiler == release_data.compiler then
 				release_data.download_url = string.format("%s/artifacts/winbuild/mmapper-%s-Windows-%s.zip?branch=master&job=%s", project_url, release_data.tag_name, release_data.arch, url_quote(job.name))
 				release_data.sha256_url = string.format("%s/artifacts/winbuild/mmapper-%s-Windows-%s.zip.sha256?branch=master&job=%s", project_url, release_data.tag_name, release_data.arch, url_quote(job.name))
 			end
