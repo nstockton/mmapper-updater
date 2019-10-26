@@ -93,7 +93,11 @@ local function _get_latest_appveyor(arch, compiler)
 	release_data.compiler = compiler or "mingw"
 	release_data.status = av and av.build.status or nil
 	if release_data.status == "success" then
-		release_data.tag_name = string.match(av.build.version, "^[vV](.+)[-][^-]+$")
+		if av.build.isTag then
+			release_data.tag_name = string.match(av.build.version, "^[vV]([^-]+)")
+		else
+			release_data.tag_name = string.match(av.build.version, "^[vV](.+)[-][^-]+$")
+		end
 		release_data.updated_at = av.build.updated
 		for i, job in ipairs(av.build.jobs) do
 			local job_arch = string.match(string.lower(job.name), "arch=(x%d%d)")
