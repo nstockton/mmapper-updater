@@ -93,7 +93,7 @@ local function _get_latest_appveyor(arch, compiler)
 	release_data.compiler = compiler or "mingw"
 	release_data.status = av and av.build.status or nil
 	if release_data.status == "success" then
-		if av.build.isTag then
+		if string.findpos(av.build.version, "-0-g") then
 			release_data.tag_name = string.match(av.build.version, "^[vV]([^-]+)")
 		else
 			release_data.tag_name = string.match(av.build.version, "^[vV](.+)[-][^-]+$")
