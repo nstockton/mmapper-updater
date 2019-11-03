@@ -1,4 +1,5 @@
 require("mystdlib")
+local base64 = require("ee5_base64")
 local getch = require("getch")
 local json = require("dkjson")
 local lfs = require("lfs")
@@ -211,6 +212,40 @@ local function needs_help()
 	return flags["help"] or flags["h"] or flags["?"] or false
 end
 
+local function needs_script_update()
+	local flags = get_flags(true)
+	return flags["update"] or flags["u"] or false
+end
+
+local function script_update()
+	local project_url = "https://api.github.com/repos/nstockton/mmapper-updater/contents/updater/update_checker.lua?ref=master"
+	local script_path = assert(get_script_path(), "Error: Unable to retrieve path of the updater script.")
+	assert(os.isFile(script_path), string.format("Error: '%s' is not a file.", script_path))
+	local script_size = assert(os.fileSize(script_path))
+	local handle = assert(io.open(script_path, "rb"))
+	local script_data = assert(handle:read("*all"), string.format("Error: Unable to read data from '%s'.", script_path))
+	handle:close()
+	local command = string.format("curl.exe --silent --location --retry 999 --retry-max-time 0 --continue-at - \"%s\"", project_url)
+	local handle = assert(io.popen(command))
+	local gh, pos, err = json.decode(handle:read("*all"), 1, nil)
+	handle:close()
+	assert(gh, err)
+	-- GitHub might return an error message if the path was invalid, ETC.
+	assert(gh.encoding and gh.content and gh.size, gh.message or "Error: unknown data returned.")
+	assert(gh.encoding == "base64", string.format("Error: unknown encoding '%s', should be 'base64'.", gh.encoding))
+	local content = base64.decode(gh.content)
+	assert(gh.size > 0, "Error: reported size by GitHub is 0.")
+	assert(string.len(content) == gh.size, "Error: size of retrieved content and reported size by GitHub do not match.")
+	if script_data ~= content then
+		local handle = assert(io.open(script_path, "wb"))
+		handle:write(content)
+		handle:close()
+		printf("The update script has been successfully updated.")
+	elseif not called_by_script() then
+		printf("The update script is up to date.")
+	end
+end
+
 local function get_latest_info(last_provider, last_arch, last_compiler)
 	local bool2int = function (b) return b and 1 or 0 end
 	local flags = get_flags(true)
@@ -245,6 +280,9 @@ local last = get_last_info()
 if needs_help() then
 	printf("%s Updater V%s.", APP_NAME, SCRIPT_VERSION)
 	printf(HELP_TEXT)
+	os.exit(0)
+elseif needs_script_update() then
+	script_update()
 	os.exit(0)
 end
 
