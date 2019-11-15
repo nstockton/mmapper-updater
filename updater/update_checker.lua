@@ -213,7 +213,36 @@ local function needs_script_update()
 end
 
 
+local function script_download_7z()
+	if os.isFile("7z.exe") and os.isFile("7z.dll") then
+		return
+	end
+	local project_url = function (name) return string.format("https://api.github.com/repos/nstockton/mmapper-updater/contents/updater/%s?ref=master", name) end
+	local commands = {}
+	table.insert(commands, string.format("curl.exe --silent --location --retry 999 --retry-max-time 0 --continue-at - \"%s\"", project_url("7z.exe")))
+	table.insert(commands, string.format("curl.exe --silent --location --retry 999 --retry-max-time 0 --continue-at - \"%s\"", project_url("7z.dll")))
+	for i, command in ipairs(commands) do
+		local handle = assert(io.popen(command))
+		local gh, pos, err = json.decode(handle:read("*all"), 1, nil)
+		handle:close()
+		assert(gh, err)
+		-- GitHub might return an error message if the path was invalid, ETC.
+		assert(gh.encoding and gh.content and gh.size, gh.message or "Error: unknown data returned.")
+		assert(gh.encoding == "base64", string.format("Error: unknown encoding '%s', should be 'base64'.", gh.encoding))
+		local content = base64.decode(gh.content)
+		assert(gh.size > 0, "Error: reported size by GitHub is 0.")
+		assert(string.len(content) == gh.size, "Error: size of retrieved content and reported size by GitHub do not match.")
+		local name = assert(gh.name, "Error: cannot retrieve file name when downloading 7zip.")
+		local handle = assert(io.open(name, "wb"))
+		handle:write(content)
+		handle:close()
+	end
+	printf("7zip has been successfully downloaded.")
+end
+
+
 local function script_update()
+	script_download_7z()
 	local project_url = "https://api.github.com/repos/nstockton/mmapper-updater/contents/updater/update_checker.lua?ref=master"
 	local script_path = assert(get_script_path(), "Error: Unable to retrieve path of the updater script.")
 	assert(os.isFile(script_path), string.format("Error: '%s' is not a file.", script_path))
