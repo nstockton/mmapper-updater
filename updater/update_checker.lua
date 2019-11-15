@@ -4,13 +4,16 @@ local getch = require("getch")
 local json = require("dkjson")
 local lfs = require("lfs")
 
+
 local APP_NAME = "MMapper"
 local SCRIPT_VERSION = "1.0"
 local GITHUB_USER = "MUME"
 local APPVEYOR_USER = "nschimme"
 local REPO = "MMapper"
 local RELEASE_INFO_FILE = "update_info.ignore"
-local ZIP_FILE = "mmapper.zip"
+local DOWNLOAD_DESTINATION = "mmapper_installer.exe"
+local MAP_DESTINATION = "arda.mm2"
+local TEMP_DIR = "tempmmapper"
 
 local HELP_TEXT = [[
 -h, --help:	Display this help.
@@ -26,16 +29,19 @@ local function machine_arch()
 	return arch and string.findpos(arch, "64") and "x64" or "x86"
 end
 
+
 local function get_last_info()
 	-- Return the previously stored release information as a table.
-	local release_data = {}
 	if os.isFile(RELEASE_INFO_FILE) then
-		local fileObj = io.open(RELEASE_INFO_FILE, "rb")
-		release_data = json.decode(fileObj:read("*all"), 1, nil)
-		fileObj:close()
+		local handle = assert(io.open(RELEASE_INFO_FILE, "rb"))
+		local release_data, pos, err = json.decode(handle:read("*all"), 1, nil)
+		handle:close()
+		return assert(release_data, err)
+	else
+		return {}
 	end
-	return release_data
 end
+
 
 local function save_last_info(tbl)
 	-- Encode the release information in tbl to JSon, and save it to a file.
@@ -45,78 +51,81 @@ local function save_last_info(tbl)
 	end
 	table.sort(ordered_keys)
 	local data = string.gsub(json.encode(tbl, {indent=true, level=0, keyorder=ordered_keys}), "\r?\n", "\r\n")
-	local handle = io.open(RELEASE_INFO_FILE, "wb")
+	local handle = assert(io.open(RELEASE_INFO_FILE, "wb"))
 	handle:write(data)
 	handle:close()
 end
 
+
 local function _get_latest_github(arch, compiler)
 	local project_url = string.format("https://api.github.com/repos/%s/%s/releases/latest", GITHUB_USER, REPO)
 	local command = string.format("curl.exe --silent --location --retry 999 --retry-max-time 0 --continue-at - \"%s\"", project_url)
-	local handle = io.popen(command)
-	local result = handle:read("*all")
-	local gh = json.decode(result, 1, nil)
+	local handle = assert(io.popen(command))
+	local gh, pos, err = json.decode(handle:read("*all"), 1, nil)
 	handle:close()
+	assert(gh, err)
 	local release_data = {}
+	release_data.provider = "github"
+	release_data.status = "success"
 	release_data.arch = arch or "x86"
 	release_data.compiler = compiler or "mingw"
-	release_data.status = "success"
-	if gh then
-		release_data.tag_name = gh.tag_name
-		for i, asset in ipairs(gh.assets) do
-			if string.match(string.lower(asset.name), "^mmapper[-].-[-]windows[-]" .. release_data.arch .. ".zip$") then
-				release_data.download_url = asset.browser_download_url
-				release_data.size = asset.size
-				release_data.updated_at = asset.updated_at
-			elseif string.match(string.lower(asset.name), "^mmapper[-].-[-]windows[-]" .. release_data.arch .. ".zip.sha256$") then
-				release_data.sha256_url = asset.browser_download_url
-			end
+	release_data.tag_name = assert(gh.tag_name, "Error: 'tag_name' not in retrieved data.")
+	assert(gh.assets, "Error: 'assets' not in retrieved data.")
+	for i, asset in ipairs(gh.assets) do
+		assert(asset.name, "Error: 'name' not in 'asset'.")
+		if string.startswith(asset.name, "mmapper-") and string.endswith(asset.name, "-Windows-" .. release_data.arch .. ".exe") then
+			release_data.download_url = assert(asset.browser_download_url, "Error: 'browser_download_url' for installer not in 'asset'.")
+			release_data.size = assert(asset.size, "Error: 'size' for installer not in 'asset'.")
+			release_data.updated_at = assert(asset.updated_at, "Error: 'updated_at' for installer not in 'asset'.")
+		elseif string.startswith(asset.name, "mmapper-") and string.endswith(asset.name, "-Windows-" .. release_data.arch .. ".exe.sha256") then
+			release_data.sha256_url = assert(asset.browser_download_url, "Error: 'browser_download_url' for SHA256 not in 'asset'.")
+		elseif asset.name == "arda.mm2" then
+			release_data.map_download_url = assert(asset.browser_download_url, "Error: 'browser_download_url' for map not in 'asset'.")
+			release_data.map_size = assert(asset.size, "Error: 'size' for map not in 'asset'.")
+			release_data.map_updated_at = assert(asset.updated_at, "Error: 'updated_at' for map not in 'asset'.")
 		end
 	end
-	release_data.tag_name = release_data.tag_name or ""
-	release_data.download_url = release_data.download_url or ""
-	release_data.size = release_data.size or 0
-	release_data.updated_at = release_data.updated_at or ""
-	release_data.sha256_url = release_data.sha256_url or ""
-	release_data.provider = "github"
 	return release_data
 end
+
 
 local function _get_latest_appveyor(arch, compiler)
 	local project_url = string.format("https://ci.appveyor.com/api/projects/%s/%s", APPVEYOR_USER, REPO)
 	local command = string.format("curl.exe --silent --location --retry 999 --retry-max-time 0 --continue-at - \"%s\"", project_url)
-	local handle = io.popen(command)
-	local result = handle:read("*all")
-	local av = json.decode(result, 1, nil)
+	local handle = assert(io.popen(command))
+	local av, pos, err = json.decode(handle:read("*all"), 1, nil)
 	handle:close()
+	assert(av, err)
 	local release_data = {}
+	release_data.provider = "appveyor"
+	release_data.size = nil
 	release_data.arch = arch or "x86"
 	release_data.compiler = compiler or "mingw"
-	release_data.status = av and av.build.status or nil
+	assert(av.build, "Error: 'build' not in retrieved data.")
+	release_data.status = assert(av.build.status, "Error: 'status' not in 'build'.")
 	if release_data.status == "success" then
+		assert(av.build.version, "Error: 'version' not in 'build'.")
 		if string.findpos(av.build.version, "-0-g") then
 			release_data.tag_name = string.match(av.build.version, "^[vV]([^-]+)")
 		else
 			release_data.tag_name = string.match(av.build.version, "^[vV](.+)[-][^-]+$")
 		end
-		release_data.updated_at = av.build.updated
+		release_data.updated_at = assert(av.build.updated, "Error: 'updated' not in 'build'.")
+		assert(av.build.jobs, "Error: 'jobs' not in 'build'.")
 		for i, job in ipairs(av.build.jobs) do
+			assert(job.name, "Error: 'name' not in job.")
 			local job_arch = string.match(string.lower(job.name), "arch=(x%d%d)")
 			local job_compiler = string.match(string.lower(job.name), "compiler=([^%s%d,]+)")
+			assert(job.status, "Error: 'status' not in job.")
 			if job.status == "success" and job_arch == release_data.arch and job_compiler == release_data.compiler then
-				release_data.download_url = string.format("%s/artifacts/winbuild/mmapper-%s-Windows-%s.zip?branch=master&job=%s", project_url, release_data.tag_name, release_data.arch, url_quote(job.name))
-				release_data.sha256_url = string.format("%s/artifacts/winbuild/mmapper-%s-Windows-%s.zip.sha256?branch=master&job=%s", project_url, release_data.tag_name, release_data.arch, url_quote(job.name))
+				release_data.download_url = string.format("%s/artifacts/winbuild/mmapper-%s-Windows-%s.exe?branch=master&job=%s", project_url, release_data.tag_name, release_data.arch, url_quote(job.name))
+				release_data.sha256_url = string.format("%s/artifacts/winbuild/mmapper-%s-Windows-%s.exe.sha256?branch=master&job=%s", project_url, release_data.tag_name, release_data.arch, url_quote(job.name))
 			end
 		end
 	end
-	release_data.tag_name = release_data.tag_name or ""
-	release_data.download_url = release_data.download_url or ""
-	release_data.size = nil
-	release_data.updated_at = release_data.updated_at or ""
-	release_data.sha256_url = release_data.sha256_url or ""
-	release_data.provider = "appveyor"
 	return release_data
 end
+
 
 local function prompt_for_update()
 	io.write("Update now? (Y to update, N to skip this release in future, Q to exit and do nothing) ")
@@ -136,86 +145,73 @@ local function prompt_for_update()
 	end
 end
 
+
 local function do_download(release)
-	local hash
 	printf("Downloading %s %s %s %s (%s) from %s.", APP_NAME, release.tag_name, release.arch, release.compiler == "mingw" and "MinGW" or release.compiler == "vs" and "Visual Studio" or release.compiler, release.updated_at, release.provider == "github" and "GitHub" or release.provider == "appveyor" and "AppVeyor" or string.capitalize(release.provider))
-	if release.sha256_url ~= "" then
-		local handle = io.popen(string.format("curl.exe --silent --location --retry 999 --retry-max-time 0 --continue-at - \"%s\"", release.sha256_url))
-		hash = string.lower(string.strip(handle:read("*all")))
-		handle:close()
-		if not string.endswith(hash, ".zip") then
-			printf("Invalid checksum '%s'", hash)
-			return false
-		end
-		hash = string.match(hash, "^%S+")
+	local handle = assert(io.popen(string.format("curl.exe --silent --location --retry 999 --retry-max-time 0 --continue-at - \"%s\"", release.sha256_url)))
+	local result = string.lower(string.strip(handle:read("*all")))
+	handle:close()
+	local hash = assert(string.match(result, "^([0-9a-f]+).+%.exe$"), string.format("Invalid checksum '%s'", result))
+	os.execute(string.format("curl.exe --silent --location --retry 999 --retry-max-time 0 --continue-at - --output %s \"%s\"", DOWNLOAD_DESTINATION, release.download_url))
+	local downloaded_size = assert(os.fileSize(DOWNLOAD_DESTINATION))
+	if release.map_download_url then
+		printf("Downloading map file from %s.", release.provider == "github" and "GitHub" or release.provider == "appveyor" and "AppVeyor" or string.capitalize(release.provider))
+		os.execute(string.format("curl.exe --silent --location --retry 999 --retry-max-time 0 --continue-at - --output %s \"%s\"", MAP_DESTINATION, release.map_download_url))
+		assert(os.isFile(MAP_DESTINATION), "Error downloading map: downloaded file not found.")
+		local map_downloaded_size = assert(os.fileSize(MAP_DESTINATION))
+		assert(map_downloaded_size > 0 and map_downloaded_size == release.map_size, "Error downloading map: Downloaded file size and reported size from provider API do not match.")
 	end
-	os.execute(string.format("curl.exe --silent --location --retry 999 --retry-max-time 0 --continue-at - --output %s \"%s\"", ZIP_FILE, release.download_url))
-	local downloaded_size , error = os.fileSize(ZIP_FILE)
 	-- release.size should be nil if the provider's API doesn't support retrieving file size.
 	-- If the provider does support retrieving file size, but for some reason did not send it, release.size should be 0.
-	if downloaded_size and downloaded_size > 0 and downloaded_size == release.size or not release.size then
-		if release.sha256_url == "" and release.provider == "github" and release.tag_name == "v19.04.0" then
-			save_last_info(release)
-			printf("Warning: GitHub releases do not currently have checksum files to verify the download. This will be fixed in the next %s release. You can ignore this message for now.", APP_NAME)
-			return true
-		end
-		printf("Verifying download.")
-		if not hash then
-			printf("Error: no checksum available. Aborting.")
-		elseif sha256sum_file(ZIP_FILE) == hash then
-			save_last_info(release)
-			printf("OK.")
-			return true
-		else
-			printf("Error: checksums do not match. Aborting.")
-		end
-	elseif error then
-		printf(error)
+	assert(not release.size or downloaded_size and downloaded_size > 0 and downloaded_size == release.size, "Error downloading release: Downloaded file size and reported size from provider API do not match.")
+	printf("Verifying download.")
+	if sha256sum_file(DOWNLOAD_DESTINATION) == hash then
+		save_last_info(release)
+		printf("OK.")
+		return true
 	else
-		printf("Error downloading release: Downloaded file size and reported size from provider API do not match.")
+		printf("Error: checksums do not match. Aborting.")
+		if os.isFile(DOWNLOAD_DESTINATION) then
+			os.remove(DOWNLOAD_DESTINATION)
+		end
+		return false
 	end
-	if os.isFile(ZIP_FILE) then
-		os.remove(ZIP_FILE)
-	end
-	return false
 end
 
-function do_extract()
+
+local function do_extract()
 	local pwd = lfs.currentdir()
 	printf("Extracting files.")
-	os.execute(string.format("unzip.exe -qq \"%s\" -d \"tempmmapper\"", ZIP_FILE))
-	if os.isFile(ZIP_FILE) then
-		os.remove(ZIP_FILE)
+	os.execute(string.format("7z.exe x \"%s\" -o\"%s\" \"bin\" > nul", DOWNLOAD_DESTINATION, TEMP_DIR))
+	assert(os.isDir(TEMP_DIR), "Error extracting files.")
+	if os.isFile(MAP_DESTINATION) then
+		os.rename(string.format("./%s", MAP_DESTINATION), string.format("./%s/%s", TEMP_DIR, MAP_DESTINATION))
 	end
-	if not lfs.chdir(pwd .. "\\tempmmapper") then
-		return printf("Error: failed to change directory to '%s\\tempmmapper'", pwd)
+	if os.isFile(DOWNLOAD_DESTINATION) then
+		os.remove(DOWNLOAD_DESTINATION)
 	end
-	local copy_from
-	for item in lfs.dir(lfs.currentdir()) do
-		if lfs.attributes(item, "mode") == "directory" and string.startswith(string.lower(item), "mmapper-") then
-			copy_from = string.format("tempmmapper\\%s", item)
-			break
-		end
-	end
-	lfs.chdir(pwd)
-	os.execute(string.format("xcopy \"%s\" \"..\\mmapper\" /E /V /I /Q /R /Y", copy_from))
-	os.execute("rd /S /Q \"tempmmapper\"")
+	os.execute(string.format("xcopy \"%s\" \"..\\mmapper\" /E /V /I /Q /R /Y", TEMP_DIR))
+	os.execute(string.format("rd /S /Q \"%s\"", TEMP_DIR))
 	printf("Done.")
 end
+
 
 local function called_by_script()
 	return get_flags(true)["calledbyscript"] or false
 end
+
 
 local function needs_help()
 	local flags = get_flags(true)
 	return flags["help"] or flags["h"] or flags["?"] or false
 end
 
+
 local function needs_script_update()
 	local flags = get_flags(true)
 	return flags["update"] or flags["u"] or false
 end
+
 
 local function script_update()
 	local project_url = "https://api.github.com/repos/nstockton/mmapper-updater/contents/updater/update_checker.lua?ref=master"
@@ -245,6 +241,7 @@ local function script_update()
 		printf("The update script is up to date.")
 	end
 end
+
 
 local function get_latest_info(last_provider, last_arch, last_compiler)
 	local bool2int = function (b) return b and 1 or 0 end
@@ -277,6 +274,7 @@ end
 
 local last = get_last_info()
 
+
 if needs_help() then
 	printf("%s Updater V%s.", APP_NAME, SCRIPT_VERSION)
 	printf(HELP_TEXT)
@@ -286,20 +284,22 @@ elseif needs_script_update() then
 	os.exit(0)
 end
 
+
 -- Clean up previously left junk.
-if os.isFile(ZIP_FILE) then
-	os.remove(ZIP_FILE)
+if os.isFile(DOWNLOAD_DESTINATION) then
+	os.remove(DOWNLOAD_DESTINATION)
 end
-if os.isDir("tempmmapper") then
-	os.execute("rd /S /Q \"tempmmapper\"")
+if os.isDir(TEMP_DIR) then
+	os.execute(string.format("rd /S /Q \"%s\"", TEMP_DIR))
 end
 
+
 local latest = get_latest_info(last.provider, last.arch, last.compiler)
+
 
 if os.isDir("..\\mmapper") and not called_by_script() then
 	printf("Checking for updates to %s.", APP_NAME)
 end
-
 if latest.status ~= "success" then
 	printf("Error: unable to update at this time. Please try again in a few minutes.")
 	printf("Build status returned by the server was (%s).", latest.status or "unknown")
@@ -332,6 +332,7 @@ else
 		save_last_info(last)
 	end
 end
+
 
 pause()
 os.exit(0)
