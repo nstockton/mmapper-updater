@@ -6,7 +6,7 @@ local lfs = require("lfs")
 
 
 local APP_NAME = "MMapper"
-local SCRIPT_VERSION = "1.0"
+local SCRIPT_VERSION = "1.1"
 local GITHUB_USER = "MUME"
 local APPVEYOR_USER = "nschimme"
 local REPO = "MMapper"
@@ -18,16 +18,8 @@ local TEMP_DIR = "tempmmapper"
 local HELP_TEXT = [[
 -h, --help:	Display this help.
 -release, -dev:	 Specify whether the latest stable release from GitHub should be used, or the latest development build from AppVeyor (defaults to release).
--x, -x86, -x64:	Specify the architecture of the binaries to download (defaults to the system architecture or x86 if not found). -x will attempt to use the architecture reported by the system.
 -MinGW, -VS:	Specify which binaries to download based on compiler (defaults to MinGW).
 ]]
-
-
-local function machine_arch()
-	-- returns 'x64' if the version of Windows is 64-bit, 'x86' otherwise.
-	local arch = architecture()
-	return arch and string.findpos(arch, "64") and "x64" or "x86"
-end
 
 
 local function get_last_info()
@@ -67,7 +59,7 @@ local function _get_latest_github(arch, compiler)
 	local release_data = {}
 	release_data.provider = "github"
 	release_data.status = "success"
-	release_data.arch = arch or "x86"
+	release_data.arch = arch or "x64"
 	release_data.compiler = compiler or "mingw"
 	release_data.tag_name = assert(gh.tag_name, "Error: 'tag_name' not in retrieved data.")
 	assert(gh.assets, "Error: 'assets' not in retrieved data.")
@@ -99,7 +91,7 @@ local function _get_latest_appveyor(arch, compiler)
 	local release_data = {}
 	release_data.provider = "appveyor"
 	release_data.size = nil
-	release_data.arch = arch or "x86"
+	release_data.arch = arch or "x64"
 	release_data.compiler = compiler or "mingw"
 	assert(av.build, "Error: 'build' not in retrieved data.")
 	release_data.status = assert(av.build.status, "Error: 'status' not in 'build'.")
@@ -118,8 +110,8 @@ local function _get_latest_appveyor(arch, compiler)
 			local job_compiler = string.match(string.lower(job.name), "compiler=([^%s%d,]+)")
 			assert(job.status, "Error: 'status' not in job.")
 			if job.status == "success" and job_arch == release_data.arch and job_compiler == release_data.compiler then
-				release_data.download_url = string.format("%s/artifacts/winbuild/mmapper-%s-Windows-%s.exe?branch=master&job=%s", project_url, release_data.tag_name, release_data.arch, url_quote(job.name))
-				release_data.sha256_url = string.format("%s/artifacts/winbuild/mmapper-%s-Windows-%s.exe.sha256?branch=master&job=%s", project_url, release_data.tag_name, release_data.arch, url_quote(job.name))
+				release_data.download_url = string.format("%s/artifacts/mmapper-%s-Windows-%s.exe?branch=master&pr=false&job=%s", project_url, release_data.tag_name, release_data.arch, url_quote(job.name))
+				release_data.sha256_url = string.format("%s/artifacts/mmapper-%s-Windows-%s.exe.sha256?branch=master&pr=false&job=%s", project_url, release_data.tag_name, release_data.arch, url_quote(job.name))
 			end
 		end
 	end
@@ -273,26 +265,20 @@ end
 
 
 local function get_latest_info(last_provider, last_arch, last_compiler)
-	local bool2int = function (b) return b and 1 or 0 end
 	local flags = get_flags(true)
 	local use_github = flags["release"]
 	local use_appveyor = flags["dev"] or flags["devel"] or flags["development"]
 	local use_mingw = flags["mingw"]
 	local use_vs = flags["vs"]
-	local use_x86 = flags["x86"]
-	local use_x64 = flags["x64"]
-	local detect_arch = flags["x"]
 	assert(not (use_github and use_appveyor), "Error: release and development are mutually exclusive.")
 	assert(not (use_mingw and use_vs), "Error: MinGW and VS are mutually exclusive.")
-	assert(bool2int(use_x86) + bool2int(use_x64) + bool2int(detect_arch) <= 1, "Error: x86 and x64 are mutually exclusive.")
-	assert(use_github and not use_x64 or not use_github, "Error: x86 is the only supported architecture for GitHub releases.")
 	assert(use_github and not use_vs or not use_github, "Error: MinGW is the only supported compiler for GitHub releases.")
 	local provider = use_github and "github" or use_appveyor and "appveyor" or last_provider or "github"
-	local arch = detect_arch and machine_arch() or use_x86 and "x86" or use_x64 and "x64" or last_arch or machine_arch() or "x86"
+	local arch = "x64"
 	local compiler = use_mingw and "mingw" or use_vs and "vs" or last_compiler or "mingw"
 	if provider == "github" then
 		-- Change this if / when more options for GitHub releases become available.
-		return _get_latest_github("x86", "mingw")
+		return _get_latest_github(arch, "mingw")
 	elseif provider == "appveyor" then
 		return _get_latest_appveyor(arch, compiler)
 	else
